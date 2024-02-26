@@ -1,2 +1,4 @@
 db:
-  port: 1433
+  host: localhost
+  database: test_db
+  trustServerCertificate: true

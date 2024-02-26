@@ -207,13 +207,29 @@ export class InformationSchemaReader{
                     and table_name=$2
                     and column_name=$3;
         `,[table_schema, table_name, column_name]).fetchOneRowIfExists(); 
-        return (result.row || null) as Column|null;
+        if (!result.row) return null;
+        var info = {} as Record<string, any>;
+        for (let field in result.row) {
+            info[field.toLowerCase()] = result.row[field];
+        }
+        // @ts-ignore emits more!
+        return info;
     }
 }
 
 function toUninterpolatedQuery(sql:string, parameters:any[]){
-    var result = sql.replace(/\$(\d+)\b/g, (_, number:number) => parameters[number - 1]);
+    var sentence = sql.replace(/(\/\*\s*TOP\s*\((\d+)\)\s*\*\/)(.*)(LIMIT\s*(\d+))/gi, 
+        function (all, _top, topN, between, limit, limitN) {
+            if (topN == limitN) {
+                return `TOP (${topN})${between} /*${limit}*/`;
+            }
+            return all;
+        }
+    ).replace(/\btrue\b/ig,'(/*true*/1=1)')
+    .replace(/\bfalse\b/ig,'(/*false*/1=0)');
+    var result = sentence.replace(/\$(\d+)\b/g, (_, number:number) => quoteNullable(parameters[number - 1]));
     // console.log('toUninterpolatedQuery',sql,parameters,result)
+    console.log("*************** SQL:", result)
     return result
 }
 
