@@ -5,7 +5,7 @@ var MAX_QUERIES=100;
 var MAX_CICLES=24;
 
 var expect = require('expect.js');
-var mssql = require('mssql');
+var tedious = require('tedious');
 var sqlserver = require('..');
 var colors = require('colors'); 
 console.warn(sqlserver.poolBalanceControl());

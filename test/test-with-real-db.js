@@ -4,7 +4,7 @@
 if(process.env.COVER==="ndb") return;
 
 var expect = require('expect.js');
-var mssql = require('mssql');
+var tedious = require('tedious');
 var sqlserver = require('..');
 var colors = require('colors'); 
 var bestGlobals = require('best-globals');
@@ -58,7 +58,7 @@ describe('sqlserver-strict with real database', function(){
                 var client = await sqlserver.connect(config.db);
                 console.log('ACA 1')
                 expect(client).to.be.a(sqlserver.Client);
-                expect(client._client).to.be.a(mssql.ConnectionPool);
+                expect(client._client).to.be.a(tedious.ConnectionPool);
                 expect(sqlserver.poolBalanceControl().length>0).to.be.ok();
                 await client.done();
                 expect(sqlserver.poolBalanceControl().length==0).to.be.ok();
@@ -534,7 +534,7 @@ describe('sqlserver-strict with real database', function(){
                 MiniTools.readConfig([{db:connectParams}, 'local-config'], {whenNotExist:'ignore'}).then(function(config){
                     client = new sqlserver.Client("posgresql://this_user:this_pass@localhost:"+config.db.port+"/nonex");
                     expect(client).to.be.a(sqlserver.Client);
-                    expect(client._client).to.be.a(mssql.Client);
+                    expect(client._client).to.be.a(tedious.Client);
                     client.connect().then(function(){
                         done(new Error("must raise error"));
                     }).catch(function(err){
@@ -553,7 +553,7 @@ describe('sqlserver-strict with real database', function(){
                 sqlserver.debug.Client=true;
                 client = new sqlserver.Client("this_user@xxxx");
                 expect(client).to.be.a(sqlserver.Client);
-                expect(client._client).to.be.a(mssql.Client);
+                expect(client._client).to.be.a(tedious.Client);
                 client.connect("extra parameter").then(function(){
                     done(new Error("must raise error because must not have parameters"));
                 }).catch(function(err){

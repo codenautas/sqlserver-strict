@@ -2,7 +2,7 @@
 
 var assert = require('assert');
 var expect = require('expect.js');
-var mssql = require('mssql');
+var tedious = require('tedious');
 var sqlserver = require('..');
 var queryWithEmitter = require('./query-with-emitter.js');
 var bestGlobals = require('best-globals');

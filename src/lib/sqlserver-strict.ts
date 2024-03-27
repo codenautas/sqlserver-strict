@@ -1,12 +1,12 @@
 "use strict";
 
-import * as mssql from 'mssql';
+import * as tedious from 'tedious';
 
 import {promises as fs} from 'fs';
 
 import * as util from 'util';
 import * as likeAr from 'like-ar';
-import { expected, unexpected } from 'cast-error';
+import { unexpected } from 'cast-error';
 import {Stream, Transform} from 'stream';
 
 const MESSAGES_SEPARATOR_TYPE='------';
@@ -80,7 +80,7 @@ export function setLang(lang:string){
 
 export var debug:{
     pool?:true|{
-        [key:string]:{ count:number, client: mssql.ConnectionPool}
+        [key:string]:{ count:number, client: tedious.Connection }
     }
 }={};
 
@@ -184,7 +184,7 @@ export function adaptParameterTypes(parameters?:any[]){
     });
 };
 
-export type ConnectParams = mssql.config & {
+export type ConnectParams = tedious.ConnectionConfiguration & {
     host?:string // server alias
 };
 
@@ -234,7 +234,7 @@ function toUninterpolatedQuery(sql:string, parameters:any[]){
 }
 
 
-function normalizeConnectionOptions(opts:ConnectParams):mssql.config{
+function normalizeConnectionOptions(opts:ConnectParams):tedious.ConnectionConfiguration{
     const {host, ...normOpts} = opts
     const newOpts = {...normOpts, server:opts.host ?? opts.server}
     return newOpts;
@@ -255,10 +255,10 @@ export class Client{
             lastConnectionTimestamp:nowTs
         }
     }
-    private _pendingConection?: Promise<mssql.ConnectionPool>;
-    private _client?: mssql.ConnectionPool;
+    private _pendingConection?: Promise<tedious.Connection>;
+    private _client?: tedious.Connection;
     private _informationSchema:InformationSchemaReader|null=null;
-    registerDebugPool(client:mssql.ConnectionPool){
+    registerDebugPool(client:tedious.Connection){
         // @ts-expect-error secretKey is a hack
         var secretKey = client.secretKey = client.secretKey ?? 'secret_'+Math.random();
         if(debug.pool){
@@ -272,20 +272,24 @@ export class Client{
         }
     }
     constructor(connOpts:ConnectParams)
-    constructor(connOpts:null, client:mssql.ConnectionPool)
-    constructor(connOpts:ConnectParams|null, client?:mssql.ConnectionPool){
-        if(client != null){
+    constructor(connOpts:null, client:tedious.Connection)
+    constructor(connOpts:ConnectParams|null, client?:tedious.Connection){
+        if(client != null) {
             this._client = client;
             this.registerDebugPool(client)
             this.fromPool=true;
             this.postConnect();
-        } else {
-            // @ts-ignore-error ya va a tener la secret key
-            this._pendingConection = mssql.connect(normalizeConnectionOptions(connOpts));
+        } else if(connOpts != null) {
             var self = this;
-            this._pendingConection.then(function(client){
-                self.registerDebugPool(client)
-            })
+            this._pendingConection = new Promise<tedious.Connection>(function(resolve, reject){
+                var connection = tedious.connect(normalizeConnectionOptions(connOpts));
+                connection.on('connect', err => err ? reject(err) : resolve(connection));
+            }).then(function(client){
+                self.registerDebugPool(client);
+                return client;
+            });
+        } else {
+            throw new Error("Client.contructor with null, null")
         }
     }
     async connect(){
@@ -308,7 +312,7 @@ export class Client{
             throw new Error(messages.mustNotEndClientFromPool)
         }
         /* istanbul ignore else */
-        if(this._client instanceof mssql.ConnectionPool){
+        if(this._client instanceof tedious.Connection){
             // this._client.close();
         }else{
             throw new Error(messages.lackOfClient);
@@ -349,6 +353,7 @@ export class Client{
             queryArguments[0].values = queryValues;
         }
         /* istanbul ignore else */
+        var uninterpolatedQuery = toUninterpolatedQuery(queryArguments[0], queryArguments[1])
         if(log){
             // @ts-ignore if no queryText, the value must be showed also
             var sql=queryText;
@@ -365,8 +370,7 @@ export class Client{
             }
             log(sql+';','QUERY');
         }
-        var returnedQuery = this._client.query(toUninterpolatedQuery(queryArguments[0], queryArguments[1]));
-        return new Query(returnedQuery, this);
+        return new Query(uninterpolatedQuery, this);
     };
     get informationSchema():InformationSchemaReader{
         return this._informationSchema || new InformationSchemaReader(this);
@@ -512,7 +516,6 @@ export interface ResultValue extends Result{
 }
 export type ResultGeneric = ResultValue|ResultRows|ResultOneRowIfExists|ResultOneRow|Result|ResultCommand
 
-
 type Notice = string;
 
 function logErrorIfNeeded<T>(err:Error, code?:T):Error{
@@ -535,44 +538,63 @@ function obtains(message:string, count:number):string{
 } 
 
 
+type ResultBuilder<T> = T & {
+    addRow: (row:T) => void
+}
+
 class Query{
-    constructor(private _query:Promise<mssql.IResult<any>>, public client:Client/*, private _internalClient:mssql.ConnectionPool*/){
+    constructor(private uninterpolatedQuery:string, public client:Client/*, private _internalClient:mssql.ConnectionPool*/){
     }
     onNotice(_callbackNoticeConsumer:(notice:Notice)=>void):Query{
         return this;
     };
     private async _execute<TR extends ResultGeneric>(
-        adapterCallback:null|((result:mssql.IResult<any>, resolve:(result:TR)=>void, reject:(err:Error)=>void)=>void),
-        callbackForEachRow?:(row:{}, result:mssql.IResult<any>)=>Promise<void>, 
+        adapterCallback:null|((result:ResultBuilder<any>, resolve:(result:TR)=>void, reject:(err:Error)=>void)=>void),
+        callbackForEachRow?:(row:{}, result:ResultBuilder<any>)=>Promise<void>, 
     ):Promise<TR>{
-        try{
+        var q = this;
+        return new Promise<TR>(function(resolve, reject){
             var pendingRows = 0;
-            var originalResult = await this._query;
-            var originalRows = originalResult.recordset;
-            var newRows = []
-            for(var row of originalRows ?? []){
+            var rows = [] as Record<string, any>[];
+            var request = new tedious.Request(q.uninterpolatedQuery, function(err, rowCount){
+                if (err) { 
+                    reject(err)
+                } else {
+                    endMark={result:{rowCount: rowCount ?? rows.length, rows}};
+                    whenEnd();
+                }
+            });
+            var endMark:null|{result:ResultGeneric}=null;
+            request.on('error',function(err){
+                reject(err);
+            });
+            var addRow = (row:TR)=>rows.push(row);
+            request.on('row',async function(row:TR){
                 if(callbackForEachRow){
                     pendingRows++;
                     /* istanbul ignore else */
                     if(log && alsoLogRows){
                         log('-- '+JSON.stringify(row), 'ROW');
                     }
-                    await callbackForEachRow(row, originalResult);
+                    await callbackForEachRow(row, {addRow});
                     --pendingRows;
+                    whenEnd();
                 }else{
-                    newRows.push(row);
+                    addRow(row);
+                }
+            });
+            function whenEnd(){
+                if(endMark && !pendingRows){
+                    if(adapterCallback){
+                        adapterCallback(endMark.result, resolve, reject);
+                    }else{
+                        resolve(endMark.result as unknown as TR);
+                    }
                 }
             }
-            /* istanbul ignore else */
-            if (log && alsoLogRows) {
-                log('-- '+JSON.stringify(newRows), 'RESULT');
-            }
-            // @ts-ignore-error caso poco usado sin tipo de return
-            if(!adapterCallback) return;
-            return new Promise((resolve, reject)=>adapterCallback(originalResult, resolve, reject));
-        } catch(err) {
-            throw logErrorIfNeeded(expected(err));
-        }
+        }).catch(function(err){
+            throw logErrorIfNeeded(err);
+        });
     };
     async fetchUniqueValue(errorMessage?:string):Promise<ResultValue>  { 
         const {row, ...result} = await this.fetchUniqueRow();
@@ -590,7 +612,7 @@ class Query{
         return {value, ...result};
     }
     fetchUniqueRow(errorMessage?:string,acceptNoRows?:boolean):Promise<ResultOneRow> { 
-        return this._execute(function(result:mssql.IResult<any>, resolve:(result:ResultOneRow)=>void, reject:(err:Error)=>void):void{
+        return this._execute(function(result:ResultBuilder<any>, resolve:(result:ResultOneRow)=>void, reject:(err:Error)=>void):void{
             var rowCount = result.recordset?.length
             if(rowCount!==1 && (!acceptNoRows || !!rowCount)){
                 var err = new Error(obtains(errorMessage||messages.queryExpectsOneRowAnd1, rowCount));
@@ -606,16 +628,16 @@ class Query{
         return this.fetchUniqueRow(errorMessage,true);
     }
     fetchAll():Promise<ResultRows>{
-        return this._execute(function(result:mssql.IResult<any>, resolve:(result:ResultRows)=>void, _reject:(err:Error)=>void):void{
-            resolve({rows:result.recordset?.[0] as any[], rowCount:result.recordset?.length});
+        return this._execute(function(result:ResultBuilder<any>, resolve:(result:ResultRows)=>void, _reject:(err:Error)=>void):void{
+            resolve(result);
         });
     }
     execute():Promise<ResultCommand>{ 
-        return this._execute(function(result:mssql.IResult<any>, resolve:(result:ResultCommand)=>void, _reject:(err:Error)=>void):void{
+        return this._execute(function(result:ResultBuilder<any>, resolve:(result:ResultCommand)=>void, _reject:(err:Error)=>void):void{
             resolve({rowCount: result.rowsAffected?.[0] });
         });
     }
-    async fetchRowByRow(cb:(row:{}, result:mssql.IResult<any>)=>Promise<void>):Promise<void>{ 
+    async fetchRowByRow(cb:(row:{}, result:ResultBuilder<any>)=>Promise<void>):Promise<void>{ 
         if(!(cb instanceof Function)){
             var err=new Error(messages.fetchRowByRowMustReceiveCallback);
             // @ts-ignore EXTENDED ERROR
@@ -624,7 +646,7 @@ class Query{
         }
         await this._execute(null, cb);
     }
-    async onRow(cb:(row:{}, result:mssql.IResult<any>)=>Promise<void>):Promise<void>{ 
+    async onRow(cb:(row:{}, result:ResultBuilder<any>)=>Promise<void>):Promise<void>{ 
         return this.fetchRowByRow(cb);
     }
     then(){
@@ -641,7 +663,7 @@ export function setAllTypes(){
 };
 
 var pools:{
-    [key:string]:mssql.ConnectionPool
+    [key:string]:tedious.Connection
 } = {}
 
 export async function connect(connectParameters:ConnectParams):Promise<Client>{
@@ -650,7 +672,7 @@ export async function connect(connectParameters:ConnectParams):Promise<Client>{
         setAllTypes();
     }
     var idConnectParameters = JSON.stringify(connectParameters);
-    var pool = pools[idConnectParameters] || await mssql.connect(normalizeConnectionOptions(connectParameters));
+    var pool = pools[idConnectParameters] || await tedious.connect(normalizeConnectionOptions(connectParameters));
     pools[idConnectParameters] = pool;
     return new Client(null, pool);
 };
