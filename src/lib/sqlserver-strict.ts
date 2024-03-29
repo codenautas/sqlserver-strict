@@ -281,12 +281,10 @@ export class Client{
             this.postConnect();
         } else if(connOpts != null) {
             var self = this;
-            this._pendingConection = new Promise<tedious.Connection>(function(resolve, reject){
-                var connection = tedious.connect(normalizeConnectionOptions(connOpts));
-                connection.on('connect', err => err ? reject(err) : resolve(connection));
-            }).then(function(client){
-                self.registerDebugPool(client);
-                return client;
+            this._pendingConection = TediousConnect(normalizeConnectionOptions(connOpts)).then(function(conn){
+                self.registerDebugPool(conn);
+                self._client = conn;
+                return conn;
             });
         } else {
             throw new Error("Client.contructor with null, null")
@@ -569,18 +567,20 @@ class Query{
                 reject(err);
             });
             var addRow = (row:TR)=>rows.push(row);
-            request.on('row',async function(row:TR){
+            request.on('row',async function(row:Record<string,{value:any}>){
+                var valueRow = likeAr(row).map(c => c.value).plain();
                 if(callbackForEachRow){
                     pendingRows++;
                     /* istanbul ignore else */
                     if(log && alsoLogRows){
-                        log('-- '+JSON.stringify(row), 'ROW');
+                        log('-- '+JSON.stringify(valueRow), 'ROW');
                     }
-                    await callbackForEachRow(row, {addRow});
+                    await callbackForEachRow(valueRow, {addRow});
                     --pendingRows;
                     whenEnd();
                 }else{
-                    addRow(row);
+                    // @ts-ignore
+                    addRow(valueRow);
                 }
             });
             function whenEnd(){
@@ -592,6 +592,10 @@ class Query{
                     }
                 }
             }
+            var sqlConnection:tedious.Connection = q.client
+                // @ts-ignore
+                ._client!;
+            sqlConnection.execSql(request);
         }).catch(function(err){
             throw logErrorIfNeeded(err);
         });
@@ -613,14 +617,14 @@ class Query{
     }
     fetchUniqueRow(errorMessage?:string,acceptNoRows?:boolean):Promise<ResultOneRow> { 
         return this._execute(function(result:ResultBuilder<any>, resolve:(result:ResultOneRow)=>void, reject:(err:Error)=>void):void{
-            var rowCount = result.recordset?.length
+            var {rowCount} = result
             if(rowCount!==1 && (!acceptNoRows || !!rowCount)){
                 var err = new Error(obtains(errorMessage||messages.queryExpectsOneRowAnd1, rowCount));
                 //@ts-ignore err.code
                 err.code = '54011!'
                 reject(err);
             }else{
-                resolve({row:result.recordset[0] as any[], rowCount});
+                resolve({row:result.rows[0] as any[], rowCount});
             }
         });
     }
@@ -634,7 +638,7 @@ class Query{
     }
     execute():Promise<ResultCommand>{ 
         return this._execute(function(result:ResultBuilder<any>, resolve:(result:ResultCommand)=>void, _reject:(err:Error)=>void):void{
-            resolve({rowCount: result.rowsAffected?.[0] });
+            resolve(result);
         });
     }
     async fetchRowByRow(cb:(row:{}, result:ResultBuilder<any>)=>Promise<void>):Promise<void>{ 
@@ -666,13 +670,25 @@ var pools:{
     [key:string]:tedious.Connection
 } = {}
 
+async function TediousConnect(params:tedious.ConnectionConfiguration):Promise<tedious.Connection>{
+    return new Promise(function(resolve, reject){
+        var conn = tedious.connect(params, function(err){
+            if (err) {
+                reject(err);
+            } else {
+                resolve(conn);
+            }
+        })
+    })
+}
+
 export async function connect(connectParameters:ConnectParams):Promise<Client>{
     /* istanbul ignore else */
     if(allTypes){
         setAllTypes();
     }
     var idConnectParameters = JSON.stringify(connectParameters);
-    var pool = pools[idConnectParameters] || await tedious.connect(normalizeConnectionOptions(connectParameters));
+    var pool = pools[idConnectParameters] || await TediousConnect(normalizeConnectionOptions(connectParameters));
     pools[idConnectParameters] = pool;
     return new Client(null, pool);
 };

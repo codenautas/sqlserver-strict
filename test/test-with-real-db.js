@@ -28,7 +28,7 @@ describe('sqlserver-strict with real database', function(){
     ];
     describe('pool connections', function(){
         it('failed connection', function(){
-            var errConnParams = bestGlobals.changing(connectParams, {user:'unnex_user', password: 'xxxx'})
+            var errConnParams = bestGlobals.changing(connectParams, {authentication: {options: {user:'unnex_user', password: 'xxxx'}}});
             return MiniTools.readConfig([{db:errConnParams}, 'local-config'], {whenNotExist:'ignore'}).then(function(config){
                 return sqlserver.connect(config.db);
             }).then(function(client){
@@ -36,7 +36,6 @@ describe('sqlserver-strict with real database', function(){
             }).catch(function(err){
                 expect(err).to.be.a(Error);
                 expect(err.message).to.match(/not? exist|auth?enti.*password|auth?enti.*fail|Login failed for user/);
-                // expect(err.message).to.match(/not? exist|auth?enti.*password|auth?enti.*fail/);
                 expect(err.code).to.match(/28000|28P01|ELOGIN/);
             });
         });
@@ -58,7 +57,7 @@ describe('sqlserver-strict with real database', function(){
                 var client = await sqlserver.connect(config.db);
                 console.log('ACA 1')
                 expect(client).to.be.a(sqlserver.Client);
-                expect(client._client).to.be.a(tedious.ConnectionPool);
+                expect(client._client).to.be.a(tedious.Connection);
                 expect(sqlserver.poolBalanceControl().length>0).to.be.ok();
                 await client.done();
                 expect(sqlserver.poolBalanceControl().length==0).to.be.ok();
@@ -198,7 +197,7 @@ describe('sqlserver-strict with real database', function(){
                 sqlserver.debug.Query=false;
             }
         });
-        it("call multiple insert with returning clause", function(done){
+        it("call multiple insert", function(done){
             tipicalExecuteWay("insert into test_pgps.table1 values (1,'one'), (2,'two');",done,"INSERT",{
                 rowCount:2
             },"execute")
