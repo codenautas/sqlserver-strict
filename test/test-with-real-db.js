@@ -105,10 +105,14 @@ describe('sqlserver-strict with real database', function(){
                 client.done();
             }
         });
-        it.skip("successful query that doesn't return rows", async function(){
+        it("successful query that doesn't return rows", async function(){
             try {
                 sqlserver.debug.Query=true;
-                result = await client.query("drop schema if exists test_pgps;").execute();
+                var result = await client.query("drop table if exists test_pgps.table1;").execute();
+                expect(result.rowCount).to.not.be.ok();
+                await client.query("drop table if exists test_pgps.table2;").execute();
+                await client.query("drop table if exists test_pgps.table3;").execute();
+                var result = await client.query("drop schema if exists test_pgps;").execute();
                 expect(result.rowCount).to.not.be.ok();
             } finally {
                 sqlserver.debug.Query=false;
@@ -145,7 +149,7 @@ describe('sqlserver-strict with real database', function(){
                 sqlserver.debug.Query=false;
             });
         }
-        it.skip("call execute directly", function(done){
+        it("call execute directly", function(done){
             this.timeout(5000);
             tipicalExecuteWay("create schema test_pgps;",done,'CREATE');
         });
@@ -159,8 +163,8 @@ describe('sqlserver-strict with real database', function(){
                     throw err;
                 }
                 expect(err).to.be.a(Error);
-                expect(err).to.match(msg);
-                expect(err.code).to.be(code);
+                expect(err.message || err.errors[0].message).to.match(msg);
+                expect(err.code ||  err.errors[0].code).to.be(code);
             }
             if(expectedErrorLog /*TODO: RESTAURAR ESTE CONTROL */ && false ){
                 await sqlserver.readyLog;
@@ -172,19 +176,19 @@ describe('sqlserver-strict with real database', function(){
                 }
             }
         }
-        it.skip("failed call", function(){
-            return tipicalFail("create schema test_pgps;","the schema exists",'42P06',/(exist.*|test_pgps.*){2}/,
+        it("failed call", function(){
+            return tipicalFail("create schema test_pgps;","the schema exists",'EREQUEST',/(already.*|exist.*|test_pgps.*){2}/,
                 null,
                 /PG-ERROR --ERROR! 42P06.*test_pgps(.|\s)*-- QUERY(.|\s)*create schema test_pgps/m
             );
         });
-        it.skip("call a compound", function(done){
+        it("call a compound", function(done){
             tipicalExecuteWay(
-                "do $$ begin "+
-                "create table test_pgps.table1(id integer primary key, text1 text); "+
-                "create table test_pgps.table2(text2 text primary key, int2 integer); "+
-                "create table test_pgps.table3(id3 integer primary key, num3 numeric, dou3 double precision, dat3 date, big3 bigint); "+
-                "end$$;",
+                `begin
+                create table test_pgps.table1(id integer primary key, text1 nvarchar(max));
+                create table test_pgps.table2(text2 nvarchar(100) primary key, int2 integer);
+                create table test_pgps.table3(id3 integer primary key, num3 numeric, dou3 double precision, dat3 date, big3 bigint);
+                end`,
                 done,
                 "DO"
             )
@@ -320,7 +324,7 @@ describe('sqlserver-strict with real database', function(){
         describe('information_schema', function(){
             it('find a column', async function(){
                 var info = await client.informationSchema.column('test_pgps','table1','text1');
-                expect(info.data_type).to.eql('text');
+                expect(info && info.data_type).to.eql('nvarchar');
             })
             it('not find a column', async function(){
                 var info = await client.informationSchema.column('test_pgps','table1','text77');
@@ -507,7 +511,7 @@ describe('sqlserver-strict with real database', function(){
             expect(result.row.sum_id).to.eql(2001);
         });
     })
-    describe.skip('pool-less connections', function(){
+    describe('pool-less connections', function(){
         describe('call queries', function(){
             var client;
             before(function(done){
@@ -527,25 +531,23 @@ describe('sqlserver-strict with real database', function(){
                 }).catch(done).then(function(){
                 });
             });
-            it("unsuccessful query", function(done){
-                this.timeout(5000);
+            it("unsuccessful query", async function(){
+                this.timeout(15000);
                 sqlserver.debug.Client=true;
-                MiniTools.readConfig([{db:connectParams}, 'local-config'], {whenNotExist:'ignore'}).then(function(config){
-                    client = new sqlserver.Client("posgresql://this_user:this_pass@localhost:"+config.db.port+"/nonex");
+                var config = MiniTools.readConfig([{db:connectParams}, 'local-config'], {whenNotExist:'ignore'});
+                try {
+                    var client = new sqlserver.Client("Server=localhost;Database=this_db;User Id=this_user;Password=this_pass;")
                     expect(client).to.be.a(sqlserver.Client);
+                    await client.connect();
                     expect(client._client).to.be.a(tedious.Client);
-                    client.connect().then(function(){
-                        done(new Error("must raise error"));
-                    }).catch(function(err){
-                        if(config.db.port==connectParams.port){
-                            expect(err.message).to.match(/auth?enti.*password|not? exist|auth?enti.*fail/);
-                        }else{
-                            expect(err.message).to.match(/ECONNREFUSED/);
-                        }
-                        done();
-                    }).catch(done).then(function(){
-                    });
-                });
+                    throw new Error("must raise error");
+                } catch(err) {
+                    if (config.db?.port==connectParams.port) {
+                        expect(err.message).to.match(/auth?enti.*password|not? exist|auth?enti.*fail/);
+                    } else {
+                        expect(err.message).to.match(/ECONNREFUSED/);
+                    }
+                };
             });
             it("connect with extra parameter", function(done){
                 this.timeout(5000);

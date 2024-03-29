@@ -228,7 +228,6 @@ function toUninterpolatedQuery(sql:string, parameters:any[]){
     ).replace(/\btrue\b/ig,'(/*true*/1=1)')
     .replace(/\bfalse\b/ig,'(/*false*/1=0)');
     var result = sentence.replace(/\$(\d+)\b/g, (_, number:number) => quoteNullable(parameters[number - 1]));
-    // console.log('toUninterpolatedQuery',sql,parameters,result)
     console.log("*************** SQL:", result)
     return result
 }
@@ -298,10 +297,11 @@ export class Client{
             throw new Error(messages.clientConenctMustNotReceiveParams);
         }
         /* istanbul ignore next */
-        if(!this._client || !this._pendingConection){
+        if(!this._client && !this._pendingConection){
             throw new Error(messages.lackOfClient);
         }
         this._client = await this._pendingConection;
+        this.postConnect();
         return this;
     };
     end(){
