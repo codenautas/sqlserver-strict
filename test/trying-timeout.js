@@ -40,7 +40,6 @@ describe.skip('trying timeouts', function(){
             if(err.message!="TIMEOUT EXPECTED"){
                 throw err;
             }
-            console.log('ooooooooook EXEPTION DETECTED')
             console.log(err);
         }
     });

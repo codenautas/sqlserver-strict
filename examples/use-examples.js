@@ -38,7 +38,7 @@ async function example(){
         });
         console.log('done!');
         client.done();
-        sqlserver.shoutDown(true);
+        sqlserver.shutdown(true);
     } finally {
         console.log('finally done')
     }

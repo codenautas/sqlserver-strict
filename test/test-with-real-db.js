@@ -22,9 +22,9 @@ describe('sqlserver-strict with real database', function(){
     before(async function(){
         connectParams = await getConnectParams();
     });
-    after(async function(){
-        await sqlserver.shoutDown(true);
-    })
+    // after(async function(){
+    //     await sqlserver.shutdown(true);
+    // })
     var expectedTable1Data = [
         {id:1, text1:'one'},
         {id:2, text1:'two'},
@@ -118,6 +118,7 @@ describe('sqlserver-strict with real database', function(){
                 await client.query("drop table if exists test_pgps.table2;").execute();
                 await client.query("drop table if exists test_pgps.table3;").execute();
                 await client.query("drop table if exists test_pgps.perfect_nums;").execute();
+                await client.query("drop table if exists test_pgps.attributes2;").execute();
                 var result = await client.query("drop schema if exists test_pgps;").execute();
                 expect(result.rowCount).to.not.be.ok();
             } finally {
@@ -147,7 +148,6 @@ describe('sqlserver-strict with real database', function(){
         });
         function tipicalExecuteWay(queryText,done,commandExpected,resultExpected,functionName,params){
             return client.query(queryText,params)[functionName||"fetchAll"]().then(function(result){
-                console.log('********************* sali del fetch')
                 if(resultExpected){
                     for(var attr in resultExpected){
                         expect([attr,result[attr]]).to.eql([attr,resultExpected[attr]]);
@@ -553,13 +553,9 @@ describe('sqlserver-strict with real database', function(){
                             options: { userName: 'test_user', password: 'test_pass' }
                         },
                     }
-                    console.log('ooooooooooooo 1')
                     var client = new sqlserver.Client(opts)
-                    console.log('ooooooooooooo 2')
                     expect(client).to.be.a(sqlserver.Client);
-                    console.log('ooooooooooooo 3')
                     await client.connect();
-                    console.log('ooooooooooooo 4')
                     expect(client._client).to.be.a(tedious.Connection);
                     throw new Error("must raise error");
                 } catch(err) {
@@ -584,7 +580,7 @@ describe('sqlserver-strict with real database', function(){
             });
         });
     });
-    describe.skip("onRow async ensures", function(){
+    describe("onRow async ensures", function(){
         var client;
         before(function(done){
             sqlserver.setAllTypes();
@@ -603,14 +599,14 @@ describe('sqlserver-strict with real database', function(){
         });
         it("immediate row processing", async function(){
             var adder=0;
-            await client.query('select num from generate_series(1,10) num').onRow(async function(row){
+            await client.query('select value as num from generate_series(1,10) num').onRow(async function(row){
                 adder+=row.num;
             });
             expect(adder).to.eql(55)
         })
         it("wait for each row be processed", async function(){
             var adder=0;
-            await client.query('select num from generate_series(1,10) num').onRow(async function(row){
+            await client.query('select value as num from generate_series(1,10) num').onRow(async function(row){
                 await bestGlobals.sleep(100)
                 adder+=row.num;
             });
@@ -618,7 +614,7 @@ describe('sqlserver-strict with real database', function(){
         })
         it("do not wait for each row be processed", async function(){
             var adder=0;
-            await client.query('select num from generate_series(1,10) num').onRow(function(row){
+            await client.query('select value as num from generate_series(1,10) num').onRow(function(row){
                 setTimeout(function(){
                     adder+=row.num;
                 },100);

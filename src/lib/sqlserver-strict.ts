@@ -7,7 +7,7 @@ import {promises as fs} from 'fs';
 import * as util from 'util';
 import * as likeAr from 'like-ar';
 import { unexpected } from 'cast-error';
-import {Stream, Transform} from 'stream';
+import {Stream/*, Transform*/} from 'stream';
 
 const MESSAGES_SEPARATOR_TYPE='------';
 const MESSAGES_SEPARATOR='-----------------------';
@@ -228,7 +228,6 @@ function toUninterpolatedQuery(sql:string, parameters:any[]){
     ).replace(/\btrue\b/ig,'(/*true*/1=1)')
     .replace(/\bfalse\b/ig,'(/*false*/1=0)');
     var result = sentence.replace(/\$(\d+)\b/g, (_, number:number) => quoteNullable(parameters[number - 1]));
-    console.log("*************** SQL:", result)
     return result
 }
 
@@ -413,7 +412,6 @@ export class Client{
         }
         var content = await fs.readFile(fileName,'utf-8')
         var sentences = content.split(/\r?\n\s*go;?\r?\n/i);
-        console.log('@@@@@@@@@@@@@@@@@@@@@@@@@', sentences)
         return self.executeSentences(sentences);
     }
     async bulkInsert(params:BulkInsertParams):Promise<void>{
@@ -457,13 +455,15 @@ export class Client{
         var sql = `COPY ${opts.table} ${opts.columns?`(${opts.columns.map(name=>quoteIdent(name)).join(',')})`:''} FROM ${from} ${opts.with?'WITH '+opts.with:''}`;
         return {sql, _client:this._client};
     }
-    async copyFromFile(opts:CopyFromOptsFile):Promise<ResultCommand>{
-        var {sql} = this.copyFromParseParams(opts);
-        return this.query(sql).execute();
-    }
-    copyFromInlineDumpStream(_opts:CopyFromOptsStream){
-        throw new Error('not implemented')
-    }
+    /** TODO */
+    // async copyFromFile(opts:CopyFromOptsFile):Promise<ResultCommand>{
+    //     var {sql} = this.copyFromParseParams(opts);
+    //     return this.query(sql).execute();
+    // }
+    /** TODO */
+    // copyFromInlineDumpStream(_opts:CopyFromOptsStream){
+    //     throw new Error('not implemented')
+    // }
     formatNullableToInlineDump(nullable:any){
         if(nullable==null){
             return '\\N'
@@ -486,24 +486,25 @@ export class Client{
             );
         }
     }
-    copyFromArrayStream(opts:CopyFromOptsStream){
-        var c = this;
-        var transform = new Transform({
-            writableObjectMode:true,
-            readableObjectMode:true,
-            transform(arrayChunk:any[], _encoding, next){
-                this.push(arrayChunk.map(x=>c.formatNullableToInlineDump(x)).join('\t')+'\n')
-                next();
-            },
-            flush(next){
-                this.push('\\.\n');
-                next();
-            }
-        });
-        var {inStream, ...rest} = opts;
-        inStream.pipe(transform);
-        return this.copyFromInlineDumpStream({inStream:transform, ...rest})
-    }
+    /** TODO */
+    //copyFromArrayStream(opts:CopyFromOptsStream){
+    //    var c = this;
+    //    var transform = new Transform({
+    //        writableObjectMode:true,
+    //        readableObjectMode:true,
+    //        transform(arrayChunk:any[], _encoding, next){
+    //            this.push(arrayChunk.map(x=>c.formatNullableToInlineDump(x)).join('\t')+'\n')
+    //            next();
+    //        },
+    //        flush(next){
+    //            this.push('\\.\n');
+    //            next();
+    //        }
+    //    });
+    //    var {inStream, ...rest} = opts;
+    //    inStream.pipe(transform);
+    //    return this.copyFromInlineDumpStream({inStream:transform, ...rest})
+    //}
 }
 
 export interface Result{
@@ -572,6 +573,9 @@ class Query{
                     reject(err)
                 } else {
                     endMark={result:{rowCount: rowCount ?? rows.length, rows}};
+                    if(log && alsoLogRows){
+                        log('-- '+JSON.stringify(rows), 'RESULT');
+                    }
                     whenEnd();
                 }
             });
@@ -682,7 +686,6 @@ export function setAllTypes(){
 var pools:Record<string, tedious.Connection[]> = {}
 
 async function TediousConnect(params:tedious.ConnectionConfiguration):Promise<tedious.Connection>{
-    console.log('--------------- params:', params)
     return new Promise(function(resolve, reject){
         var conn = tedious.connect(params, function(err){
             if (err) {
@@ -765,7 +768,7 @@ async function closeConnection(conn:tedious.Connection):Promise<void>{
     })
 }
 
-export async function shoutDown(verbose:boolean){
+export async function shutdown(verbose:boolean){
     if (verbose) console.log('poolBalanceControl');
     var waitFor: Promise<void>[] = []
     for (var pool of likeAr.iterator(pools)) {
