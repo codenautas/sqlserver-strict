@@ -271,8 +271,8 @@ export class Client{
         }
     }
     constructor(connOpts:ConnectParams)
-    constructor(connOpts:null, client:tedious.Connection)
-    constructor(connOpts:ConnectParams|null, client?:tedious.Connection){
+    constructor(connOpts:null, client:tedious.Connection, idConnection:string)
+    constructor(connOpts:ConnectParams|null, client?:tedious.Connection, private idConnection?:string){
         if(client != null) {
             this._client = client;
             this.registerDebugPool(client)
@@ -318,11 +318,23 @@ export class Client{
     };
     async done(){
         if(!this._client){
+            if (this._pendingConection) {
+                try {
+                    await this._pendingConection;
+                } finally {
+                }
+            }
             throw new Error(messages.clientAlreadyDone);
         }
         if(debug.pool){
             // @ts-ignore DEBUGGING
             debug.pool[this._client.secretKey].count--;
+        }
+        if (this.idConnection) {
+            pools[this.idConnection] = pools[this.idConnection] ?? [];
+            pools[this.idConnection].push(this._client);
+        } else {
+            closeConnection(this._client)
         }
         // var clientToDone=this._client;
         // @ts-expect-error disposing:
@@ -666,11 +678,10 @@ export var allTypes=false;
 export function setAllTypes(){
 };
 
-var pools:{
-    [key:string]:tedious.Connection
-} = {}
+var pools:Record<string, tedious.Connection[]> = {}
 
 async function TediousConnect(params:tedious.ConnectionConfiguration):Promise<tedious.Connection>{
+    console.log('--------------- params:', params)
     return new Promise(function(resolve, reject){
         var conn = tedious.connect(params, function(err){
             if (err) {
@@ -688,9 +699,8 @@ export async function connect(connectParameters:ConnectParams):Promise<Client>{
         setAllTypes();
     }
     var idConnectParameters = JSON.stringify(connectParameters);
-    var pool = pools[idConnectParameters] || await TediousConnect(normalizeConnectionOptions(connectParameters));
-    pools[idConnectParameters] = pool;
-    return new Client(null, pool);
+    var conn = pools[idConnectParameters]?.pop() || await TediousConnect(normalizeConnectionOptions(connectParameters));
+    return new Client(null, conn, idConnectParameters);
 };
 
 export var readyLog = Promise.resolve();
@@ -745,6 +755,27 @@ export function poolBalanceControl(){
     }
     return rta.join('\n');
 };
+
+async function closeConnection(conn:tedious.Connection):Promise<void>{
+    return new Promise(function(resolve, reject){
+        conn.close();
+        conn.on("end", resolve);
+        conn.on("error", reject);
+    })
+}
+
+export async function shoutDown(verbose:boolean){
+    if (verbose) console.log('poolBalanceControl');
+    var waitFor: Promise<void>[] = []
+    for (var pool of likeAr.iterator(pools)) {
+        var conn:tedious.Connection
+        while (conn = pool.pop()!) {
+            waitFor.push(closeConnection(conn))
+        }
+    }
+    console.warn(poolBalanceControl());
+    await Promise.all(waitFor);
+}
 
 /* istanbul ignore next */
 process.on('exit',function(){

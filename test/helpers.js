@@ -19,7 +19,7 @@ async function getConnectParams(){
                     password: "test_pass",
                   }
                 },
-            }},
+            }}, 
             'local-config'
         ],{whenNotExist:'ignore'})).db;
     }

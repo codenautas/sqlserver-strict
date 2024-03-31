@@ -22,6 +22,10 @@ describe('sqlserver-strict with real database', function(){
     before(async function(){
         connectParams = await getConnectParams();
     });
+    after(async function(){
+        console.log('////////////////////////')
+        await sqlserver.shoutDown(true);
+    })
     var expectedTable1Data = [
         {id:1, text1:'one'},
         {id:2, text1:'two'},
@@ -41,11 +45,13 @@ describe('sqlserver-strict with real database', function(){
         });
         it('failed connection within pool', async function(){
             var client = await sqlserver.connect(connectParams);
-            try{
+            try {
                 await client.connect(connectParams);
                 throw new Error('must throw error')
-            }catch(err){
+            } catch(err) {
                 expect(err.message).to.eql(sqlserver.messages.mustNotConnectClientFromPool);
+            } finally {
+                client.done()
             }
         });
         it('successful connection', async function() {
@@ -513,55 +519,63 @@ describe('sqlserver-strict with real database', function(){
     })
     describe('pool-less connections', function(){
         describe('call queries', function(){
-            var client;
-            before(function(done){
-                MiniTools.readConfig([{db:connectParams}, 'local-config'], {whenNotExist:'ignore'}).then(function(config){
-                    client = new sqlserver.Client(config.db);
-                    done();
-                });
+            var config;
+            before(async function(){
+                config = await MiniTools.readConfig([{db:connectParams}, 'local-config'], {whenNotExist:'ignore'})
                 sqlserver.setLang('en');
             });
-            it("successful query", function(done){
-                client.connect().then(function(){
-                    return client.query("select * from test_pgps.table1 where id<3 order by id;").fetchAll();
-                }).then(function(result){
-                    expect(result.rows).to.eql(expectedTable1Data);
-                    client.end();
-                    done();
-                }).catch(done).then(function(){
-                });
+            it("successful query", async function(){
+                var client = new sqlserver.Client(config.db);
+                await client.connect()
+                var result = await client.query("select * from test_pgps.table1 where id<3 order by id;").fetchAll();
+                expect(result.rows).to.eql(expectedTable1Data);
+                await client.done();
             });
             it("unsuccessful query", async function(){
                 this.timeout(15000);
                 sqlserver.debug.Client=true;
-                var config = MiniTools.readConfig([{db:connectParams}, 'local-config'], {whenNotExist:'ignore'});
                 try {
-                    var client = new sqlserver.Client("Server=localhost;Database=this_db;User Id=this_user;Password=this_pass;")
+                    // var client = new sqlserver.Client("Server=localhost;Database=this_db;User Id=this_user;Password=this_pass;")
+                    var opts = {
+                        server: 'localhost',
+                        options: {
+                            useColumnNames: true,
+                            trustServerCertificate: true,
+                            database: 'test_unexistent_db'
+                        },
+                        authentication: {
+                            type: 'default',
+                            options: { userName: 'test_user', password: 'test_pass' }
+                        },
+                    }
+                    console.log('ooooooooooooo 1')
+                    var client = new sqlserver.Client(opts)
+                    console.log('ooooooooooooo 2')
                     expect(client).to.be.a(sqlserver.Client);
+                    console.log('ooooooooooooo 3')
                     await client.connect();
-                    expect(client._client).to.be.a(tedious.Client);
+                    console.log('ooooooooooooo 4')
+                    expect(client._client).to.be.a(tedious.Connection);
                     throw new Error("must raise error");
                 } catch(err) {
-                    if (config.db?.port==connectParams.port) {
-                        expect(err.message).to.match(/auth?enti.*password|not? exist|auth?enti.*fail/);
-                    } else {
-                        expect(err.message).to.match(/ECONNREFUSED/);
-                    }
-                };
+                    expect(err.message).to.match(/Login failed for user|auth?enti.*password|not? exist|auth?enti.*fail/);
+                } finally {
+                    // await client?.done();
+                }
             });
-            it("connect with extra parameter", function(done){
+            it("connect with extra parameter", async function(){
                 this.timeout(5000);
                 sqlserver.debug.Client=true;
-                client = new sqlserver.Client("this_user@xxxx");
+                var client = new sqlserver.Client("this_user@xxxx");
                 expect(client).to.be.a(sqlserver.Client);
-                expect(client._client).to.be.a(tedious.Client);
-                client.connect("extra parameter").then(function(){
-                    done(new Error("must raise error because must not have parameters"));
-                }).catch(function(err){
+                try {
+                    var conn = await client.connect("extra parameter")
+                    throw new Error("must raise error because must not have parameters")
+                } catch(err) {
                     expect(err.message).to.match(/must no receive parameters/);
-                    done();
-                }).catch(done).then(function(){
-                });
+                } finally {
+                    await conn?.done();
+                }
             });
         });
     });

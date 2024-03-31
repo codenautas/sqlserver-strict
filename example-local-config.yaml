@@ -1,4 +1,2 @@
 db:
-  host: localhost
-  database: test_db
-  trustServerCertificate: true
+  x: nothing
