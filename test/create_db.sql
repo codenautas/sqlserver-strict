@@ -16,6 +16,9 @@ go
 create schema test_pgps;
 go
 
+ALTER USER test_user WITH DEFAULT_SCHEMA = test_pgps;
+go
+
 GRANT CONTROL ON SCHEMA::test_pgps TO test_user;
 go
 

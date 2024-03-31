@@ -398,6 +398,7 @@ export class Client{
                     return ;
                 }
                 return await self.query(sentence).execute().catch(function(err:Error){
+                    err = normalizeSqlError(err);
                     throw err;
                 });
             });
@@ -410,10 +411,10 @@ export class Client{
         if(!this._client || !this.connected){
             throw new Error(messages.attemptToExecuteSqlScriptOnNotConnected+" "+!this._client+','+!this.connected)
         }
-        return fs.readFile(fileName,'utf-8').then(function(content){
-            var sentences = content.split(/\r?\n\r?\n/);
-            return self.executeSentences(sentences);
-        });
+        var content = await fs.readFile(fileName,'utf-8')
+        var sentences = content.split(/\r?\n\s*go;?\r?\n/i);
+        console.log('@@@@@@@@@@@@@@@@@@@@@@@@@', sentences)
+        return self.executeSentences(sentences);
     }
     async bulkInsert(params:BulkInsertParams):Promise<void>{
         var self = this;
@@ -775,6 +776,15 @@ export async function shoutDown(verbose:boolean){
     }
     console.warn(poolBalanceControl());
     await Promise.all(waitFor);
+}
+
+export function normalizeSqlError(err:Error):Error{
+    if (err instanceof AggregateError) {
+        err.message = err.errors.map(err=>err.message).join('; ');
+        // @ts-ignore tiene code!
+        err.code = err.errors[0].code;
+    }
+    return err;
 }
 
 /* istanbul ignore next */

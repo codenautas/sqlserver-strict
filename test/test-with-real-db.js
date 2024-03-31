@@ -23,7 +23,6 @@ describe('sqlserver-strict with real database', function(){
         connectParams = await getConnectParams();
     });
     after(async function(){
-        console.log('////////////////////////')
         await sqlserver.shoutDown(true);
     })
     var expectedTable1Data = [
@@ -118,25 +117,32 @@ describe('sqlserver-strict with real database', function(){
                 expect(result.rowCount).to.not.be.ok();
                 await client.query("drop table if exists test_pgps.table2;").execute();
                 await client.query("drop table if exists test_pgps.table3;").execute();
+                await client.query("drop table if exists test_pgps.perfect_nums;").execute();
                 var result = await client.query("drop schema if exists test_pgps;").execute();
                 expect(result.rowCount).to.not.be.ok();
             } finally {
                 sqlserver.debug.Query=false;
             }
         });
-        it.skip("executeSqlScript succefull", function(){
+        it("execute sentences directly", async function(){
+            this.timeout(5000);
+            await client.executeSentences([
+                "create schema test_pgps",
+                "ALTER USER test_user WITH DEFAULT_SCHEMA = test_pgps",
+            ])
+        });
+        it("executeSqlScript succefull", function(){
             return client.executeSqlScript("test/script-example.sql").then(function(result){
-                expect(result.command).to.be("SELECT");
-                expect(result.rows).to.eql(undefined);
+                expect(result.rows).to.eql([{"":4}]);
             }).then(function(){
                 sqlserver.debug.Query=false;
             });
         });
-        it.skip("executeSqlScript with error", function(){
+        it("executeSqlScript with error", function(){
             return client.executeSqlScript("test/script-err-example.sql").then(function(result){
                 throw new Error('must throw an error');
             },function(err){
-                expect(err.code).to.eql('42601');
+                expect(err.code).to.match(/42601|EREQUEST/);
             });
         });
         function tipicalExecuteWay(queryText,done,commandExpected,resultExpected,functionName,params){
@@ -151,14 +157,13 @@ describe('sqlserver-strict with real database', function(){
                     expect(result.rowCount).to.not.be.ok();
                 }
                 done();
-            }).catch(done).then(function(){
+            }).catch(function(err){
+                err = sqlserver.normalizeSqlError(err);
+                done(err)
+            }).then(function(){
                 sqlserver.debug.Query=false;
             });
         }
-        it("call execute directly", function(done){
-            this.timeout(5000);
-            tipicalExecuteWay("create schema test_pgps;",done,'CREATE');
-        });
         async function tipicalFail(textQuery,reason,code,msg,functionName,expectedErrorLog, params){
             try{
                 var result = await client.query(textQuery, params)[functionName||"execute"]();
